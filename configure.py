@@ -139,6 +139,3 @@ if kafka_jvm_opts:
     ' '.join(jvm_opts + [kafka_jvm_opts])
 else:
     ' '.join(jvm_opts)
-
-# Start the Kafka broker.
-os.execl('bin/kafka-server-start.sh', 'KafkaServer', KAFKA_CONFIG_FILE)

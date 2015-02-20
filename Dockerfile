@@ -24,10 +24,10 @@ RUN mkdir -p /opt/kafka_2.11-0.8.2.0
 
 # Add the run wrapper script.
 # Script is necessary to generate the config based on environment variables
-ADD run.py /opt/kafka_2.11-0.8.2.0/bin/
+ADD configure.py /opt/kafka_2.11-0.8.2.0/bin/
 
 WORKDIR /opt/kafka_2.11-0.8.2.0
 
 EXPOSE 9092
 
-CMD ["python", "/opt/kafka_2.11-0.8.2.0/bin/run.py"]
+ENTRYPOINT python bin/configure.py && bin/kafka-server-start.sh config/server.properties
