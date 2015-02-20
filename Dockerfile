@@ -1,25 +1,33 @@
 # Dockerfile for Kafka
 
-FROM quay.io/signalfuse/maestro-base:14.04-0.1.8.1
-MAINTAINER Maxime Petazzoni <max@signalfuse.com>
+FROM debian:jessie
+MAINTAINER Daniel Collins <daniel.collins@viasat.com>
 
 ENV DEBIAN_FRONTEND noninteractive
 
+# System Packages
+RUN apt-get update && apt-get install -y openjdk-7-jre-headless wget python-pip
+# Python Packages
+RUN pip install --upgrade pip virtualenv
+
 # Get Python ZooKeeper (Kazoo)
-RUN apt-get -y install python-pip
 RUN pip install kazoo
 
+# Get Kafka
+RUN wget -q -O - http://mirror.cogentco.com/pub/apache/kafka/0.8.2.0/kafka_2.11-0.8.2.0.tgz | tar -xzf - -C /opt
+
+ENV JAVA_HOME /usr/lib/jvm/java-7-openjdk-amd64
+ENV KAFKA_HOME /opt/kafka_2.11-0.8.2.0
+
 # Get latest available release of Kafka (no stable release yet).
-RUN mkdir -p /opt
-RUN git clone https://github.com/apache/kafka.git /opt/kafka
-# Checkout "blessed" commit from trunk (we need KAFKA-1092 and KAFKA-1112)
-# (KAFKA-1092 was a55ec0620f6ce805fafe2e1d4035ec3e0ab4e0d0)
-RUN cd /opt/kafka && git checkout -b blessed 855340a2e65ffbb79520c49d0b9a231b94acd538
-RUN cd /opt/kafka && ./sbt update
-RUN cd /opt/kafka && ./sbt package
-RUN cd /opt/kafka && ./sbt assembly-package-dependency
+RUN mkdir -p /opt/kafka_2.11-0.8.2.0
 
-ADD run.py /opt/kafka/.docker/
+# Add the run wrapper script.
+# Script is necessary to generate the config based on environment variables
+ADD run.py /opt/kafka_2.11-0.8.2.0/bin/
 
-WORKDIR /opt/kafka
-CMD ["python", "/opt/kafka/.docker/run.py"]
+WORKDIR /opt/kafka_2.11-0.8.2.0
+
+EXPOSE 9092
+
+CMD ["python", "/opt/kafka_2.11-0.8.2.0/bin/run.py"]

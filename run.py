@@ -1,21 +1,11 @@
 #!/usr/bin/env python
 
-# Copyright (C) 2013 SignalFuse, Inc.
-
-# Start script for the Kafka service.
-# Requires kazoo, a pure-Python ZooKeeper client.
+# Start script for Kafka to enable environment variable config injection.
 
 from kazoo.client import KazooClient
 import logging
 import os
 import sys
-
-from maestro.guestutils import get_container_name, \
-    get_container_host_address, \
-    get_environment_name, \
-    get_node_list, \
-    get_port, \
-    get_service_name
 
 # Setup logging for Kazoo.
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -26,128 +16,96 @@ os.chdir(os.path.join(
 
 KAFKA_CONFIG_FILE = os.path.join('config', 'server.properties')
 KAFKA_LOGGING_CONFIG = os.path.join('config', 'log4j.properties')
-KAFKA_ZOOKEEPER_BASE = os.environ.get('ZOOKEEPER_BASE',
-                                      '/{}/kafka'.format(get_environment_name()))
 
-LOG_PATTERN = "%d{yyyy'-'MM'-'dd'T'HH:mm:ss.SSSXXX} %-5p [%-35.35t] [%-36.36c]: %m%n"
 
-ZOOKEEPER_NODE_LIST = ','.join(get_node_list('zookeeper', ports=['client']))
+KAFKA_CONFIG_TEMPLATE = """# Kafka configuration for {node_name}
+broker.id={broker_id:d}
+port={broker_port:d}
 
-KAFKA_CONFIG_TEMPLATE = """# Kafka configuration for %(node_name)s
-broker.id=%(broker_id)d
-advertised.host.name=%(host_address)s
-port=%(broker_port)d
-
-num.network.threads=%(num_threads)d
-num.io.threads=%(num_threads)d
+num.network.threads={num_threads:d}
+num.io.threads={num_threads:d}
 
 socket.send.buffer.bytes=1048576
 socket.receive.buffer.bytes=1048576
 socket.request.max.bytes=104857600
 
-log.dirs=%(log_dirs)s
-num.partitions=%(num_partitions)d
+log.dirs={log_dirs}
+num.partitions={num_partitions:d}
 
-log.flush.interval.messages=%(flush_interval_msgs)s
-log.flush.interval.ms=%(flush_interval_ms)d
-log.retention.hours=%(retention_hours)d
-log.retention.bytes=%(retention_bytes)d
-log.segment.bytes=%(log_segment_bytes)d
-log.roll.hours=%(log_roll_hours)d
+log.flush.interval.messages={flush_interval_msgs}
+log.flush.interval.ms={flush_interval_ms:d}
+log.retention.hours={retention_hours:d}
+log.retention.bytes={retention_bytes:d}
+log.segment.bytes={log_segment_bytes:d}
+log.roll.hours={log_roll_hours:d}
 log.cleanup.interval.mins=1
 
-default.replication.factor=%(replication_factor)d
-num.replica.fetchers=%(num_replica_fetchers)d
+default.replication.factor={replication_factor:d}
+num.replica.fetchers={num_replica_fetchers:d}
 replica.fetch.max.bytes=1048576
 replica.fetch.wait.max.ms=500
 replica.high.watermark.checkpoint.interval.ms=5000
-replica.socket.timeout.ms=%(replica_socket_timeout_ms)d
+replica.socket.timeout.ms={replica_socket_timeout_ms:d}
 replica.socket.receive.buffer.bytes=65536
 
-replica.lag.time.max.ms=%(replica_lag_max_ms)d
-replica.lag.max.messages=%(replica_lag_max_msgs)d
+replica.lag.time.max.ms={replica_lag_max_ms:d}
+replica.lag.max.messages={replica_lag_max_msgs:d}
 
-auto.leader.rebalance.enable=%(leader_rebalance)s
+auto.leader.rebalance.enable={leader_rebalance}
 controlled.shutdown.enable=true
 
-zookeeper.connect=%(zookeeper_nodes)s%(zookeeper_base)s
+zookeeper.connect={zookeeper_nodes}
 zookeeper.connection.timeout.ms=6000
 zookeeper.session.timeout.ms=6000
 zookeeper.sync.time.ms=2000
 
-kafka.metrics.polling.interval.secs=5
-kafka.metrics.reporters=kafka.metrics.KafkaCSVMetricsReporter
-kafka.csv.metrics.dir=/var/lib/kafka/metrics/
-kafka.csv.metrics.reporter.enabled=false
 """
 
-KAFKA_LOGGING_TEMPLATE = """# Log4j configuration, logs to rotating file
-log4j.rootLogger=INFO,R
+kafka_zookeeper_base = os.environ.get('kafka_zookeeper_base', '/databus/kafka')
+kafka_zookeeper_nodes = os.environ.get('KAFKA_ZOOKEEPER_NODES', 'zookeeper:2181')
 
-log4j.appender.R=org.apache.log4j.RollingFileAppender
-log4j.appender.R.File=/var/log/%(service_name)s/%(container_name)s.log
-log4j.appender.R.MaxFileSize=100MB
-log4j.appender.R.MaxBackupIndex=10
-log4j.appender.R.layout=org.apache.log4j.PatternLayout
-log4j.appender.R.layout.ConversionPattern=%(log_pattern)s
-"""
-
-replication = min(int(os.environ.get("REPLICATION", 2)), len(get_node_list('kafka')))
 # Generate the Kafka configuration from the defined environment variables.
 config_model = {
-    'node_name': get_container_name(),
-    'broker_id': int(os.environ.get('BROKER_ID', 0)),
-    'host_address': get_container_host_address(),
-    'broker_port': get_port('broker', 9092),
+    'node_name':                    str(os.environ.get('KAFKA_NODE_NAME', 'kafka')),
+    'broker_id':                    int(os.environ.get('KAFKA_BROKER_ID', 0)),
+    'broker_port':                  int(os.environ.get('KAFKA_BROKER_PORT', 9092)),
     # Default log directory is /var/lib/kafka/logs.
-    'log_dirs': os.environ.get('LOG_DIRS', '/var/lib/kafka/logs'),
-    'num_partitions': int(os.environ.get('NUM_PARTITIONS', 8)),
+    'log_dirs':                     str(os.environ.get('KAFKA_LOG_DIRS', '/var/lib/kafka/logs')),
+    'num_partitions':               int(os.environ.get('KAFKA_NUM_PARTITIONS', 8)),
     # Default retention is 7 days (168 hours).
-    'retention_hours': int(os.environ.get('RETENTION_HOURS', 168)),
+    'retention_hours':              int(os.environ.get('KAFKA_RETENTION_HOURS', 168)),
     # Default retention is only based on time.
-    'retention_bytes': int(os.environ.get('RETENTION_BYTES', -1)),
+    'retention_bytes':              int(os.environ.get('KAFKA_RETENTION_BYTES', -1)),
     # Segment size (default is 0.5GB)
-    'log_segment_bytes': int(os.environ.get('LOG_SEGMENT_BYTES', 536870912)),
+    'log_segment_bytes':            int(os.environ.get('KAFKA_LOG_SEGMENT_BYTES', 536870912)),
     # Minimum interval between rolling new log segments (default 1 week)
-    'log_roll_hours': int(os.environ.get('LOG_ROLL_HOURS', 24 * 7)),
-    'zookeeper_nodes': ZOOKEEPER_NODE_LIST,
-    'zookeeper_base': KAFKA_ZOOKEEPER_BASE,
-    'flush_interval_ms': int(os.environ.get('FLUSH_INTERVAL_MS', 10000)),
-    'flush_interval_msgs': int(os.environ.get('FLUSH_INTERVAL_MSGS', 10000)),
-    'num_threads': int(os.environ.get('NUM_THREADS', 8)),
-    'replication_factor': replication,
-    'num_replica_fetchers': int(os.environ.get('NUM_REPLICA_FETCHERS', 4)),
-    'replica_socket_timeout_ms': int(os.environ.get('REPLICA_SOCKET_TIMEOUT_MS', 2500)),
-    'replica_lag_max_ms': int(os.environ.get('REPLICA_LAG_MAX_MS', 5000)),
-    'replica_lag_max_msgs': int(os.environ.get('REPLICA_LAG_MAX_MSGS', 1000)),
-    'leader_rebalance': str(os.environ.get('AUTO_LEADER_REBALANCE', 'false').lower() == 'true').lower()
+    'log_roll_hours':               int(os.environ.get('KAFKA_LOG_ROLL_HOURS', 24 * 7)),
+    'zookeeper_nodes':              kafka_zookeeper_nodes + kafka_zookeeper_base,
+    'flush_interval_ms':            int(os.environ.get('KAFKA_FLUSH_INTERVAL_MS', 3000)),
+    'flush_interval_msgs':          int(os.environ.get('KAFKA_FLUSH_INTERVAL_MSGS', 10000)),
+    'num_threads':                  int(os.environ.get('KAFKA_NUM_THREADS', 8)),
+    'replication_factor':           int(os.environ.get('KAFKA_REPLICATION_FACTOR', 2)),
+    'num_replica_fetchers':         int(os.environ.get('KAFKA_NUM_REPLICA_FETCHERS', 4)),
+    'replica_socket_timeout_ms':    int(os.environ.get('KAFKA_REPLICA_SOCKET_TIMEOUT_MS', 2500)),
+    'replica_lag_max_ms':           int(os.environ.get('KAFKA_REPLICA_LAG_MAX_MS', 5000)),
+    'replica_lag_max_msgs':         int(os.environ.get('KAFKA_REPLICA_LAG_MAX_MSGS', 1000)),
+    'leader_rebalance':             str(os.environ.get('KAFKA_AUTO_LEADER_REBALANCE', 'false').lower() == 'true').lower()
 }
 
 with open(KAFKA_CONFIG_FILE, 'w+') as conf:
-    conf.write(KAFKA_CONFIG_TEMPLATE % config_model)
+    print 'writing configuration file to', KAFKA_CONFIG_FILE
+    conf.write(KAFKA_CONFIG_TEMPLATE.format(**config_model))
 
-
-# Setup the logging configuration.
-logging_model = {
-    'service_name': get_service_name(),
-    'container_name': get_container_name(),
-    'log_pattern': LOG_PATTERN
-}
-with open(KAFKA_LOGGING_CONFIG, 'w+') as f:
-    f.write(KAFKA_LOGGING_TEMPLATE % logging_model)
-
-# Ensure the existence of the ZooKeeper root node for Kafka
-print 'Ensuring existance of the ZooKeeper zNode chroot path %s...' % KAFKA_ZOOKEEPER_BASE
-
+print 'Ensuring existance of the ZooKeeper zNode chroot path', kafka_zookeeper_base
 
 def ensure_kafka_zk_path(retries=3):
     while retries >= 0:
         # Connect to the ZooKeeper nodes. Use a pretty large timeout in case they were
         # just started. We should wait for them for a little while.
-        zk = KazooClient(hosts=ZOOKEEPER_NODE_LIST, timeout=30000)
+        zk = KazooClient(hosts=kafka_zookeeper_nodes, timeout=30000)
         try:
             zk.start()
-            zk.ensure_path(KAFKA_ZOOKEEPER_BASE)
+            zk.ensure_path(kafka_zookeeper_base)
             return True
         except:
             retries -= 1
@@ -163,15 +121,12 @@ if not ensure_kafka_zk_path():
 jvm_opts = [
     '-server',
     '-showversion',
-    '-Dvisualvm.display.name="{}/{}"'.format(
-        get_environment_name(), get_container_name()),
 ]
 
-jmx_port = get_port('jmx', -1)
+jmx_port = int(os.environ.get('JMX_PORT', -1))
+
 if jmx_port != -1:
-    os.environ['JMX_PORT'] = str(jmx_port)
     jvm_opts += [
-        '-Djava.rmi.server.hostname={}'.format(get_container_host_address()),
         '-Dcom.sun.management.jmxremote.port={}'.format(jmx_port),
         '-Dcom.sun.management.jmxremote.rmi.port={}'.format(jmx_port),
         '-Dcom.sun.management.jmxremote.authenticate=false',
@@ -179,7 +134,11 @@ if jmx_port != -1:
         '-Dcom.sun.management.jmxremote.ssl=false',
     ]
 
-os.environ['KAFKA_OPTS'] = ' '.join(jvm_opts) + os.environ.get('JVM_OPTS', '')
+kafka_jvm_opts = os.environ.get('KAFKA_JVM_OPTS')
+if kafka_jvm_opts:
+    ' '.join(jvm_opts + [kafka_jvm_opts])
+else:
+    ' '.join(jvm_opts)
 
 # Start the Kafka broker.
-os.execl('bin/kafka-server-start.sh', 'kafka', KAFKA_CONFIG_FILE)
+os.execl('bin/kafka-server-start.sh', 'KafkaServer', KAFKA_CONFIG_FILE)
